@@ -23,6 +23,18 @@ npx expo install --fix      # fix incompatible package versions
 
 Run lint and typecheck before declaring any task done.
 
+## Git workflow
+
+- Never make application changes directly on `main`. Before starting a change, run
+	`powershell -ExecutionPolicy Bypass -File scripts/start-work.ps1 "short change name"`.
+- Commit completed work on that `feature/...` branch. Do not commit secrets or `.env` files.
+- When the work is ready, run `powershell -ExecutionPolicy Bypass -File scripts/finish-work.ps1`.
+	It runs lint and typecheck, requires a clean worktree, merges into `main` with a merge commit,
+	and pushes `main` without force. Resolve any merge conflicts on the feature branch and retry.
+- If the branch or merge is blocked by repository policy (for example, branch protection requiring
+	pull requests), stop and report that; do not bypass the policy or force-push.
+- After a merge, start the next change with `scripts/start-work.ps1` again.
+
 ## Navigation & Routing
 
 - Use **Expo Router** for all navigation. Routes live in `src/app/` — every file there is a screen, `_layout.tsx` files define navigators. Keep non-route code (components, hooks, utils) outside `src/app/`.
