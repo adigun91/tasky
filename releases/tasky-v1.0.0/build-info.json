@@ -1,0 +1,15 @@
+{
+  "release": "Tasky v1.0.0",
+  "platform": "android",
+  "artifactType": "apk",
+  "profile": "preview",
+  "distribution": "internal",
+  "status": "FINISHED",
+  "easBuildId": "ea5c4b67-ea2d-4d5e-8f03-4ddd86b69509",
+  "easBuildUrl": "https://expo.dev/accounts/adigun91/projects/tasky/builds/ea5c4b67-ea2d-4d5e-8f03-4ddd86b69509",
+  "easArtifactUrl": "https://expo.dev/artifacts/eas/v7L9g7a9OFzBKkP-LxaLFe07QH5mfYub00JQmIFqKdI.apk",
+  "githubArtifactPath": "releases/tasky-v1.0.0/tasky-v1.0.0.apk",
+  "easReportedSourceCommit": "9e8f51a2d149f97289c3008b7ce68923d23e9431",
+  "artifactSizeBytes": 98747464,
+  "sha256": "A74A60C6139A5E92E57A697D2325E802A5779DEA3310F56C49B622D58B0759D1"
+}
