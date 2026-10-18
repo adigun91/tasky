@@ -40,11 +40,13 @@ function TaskCard({ task }: { task: Task }) {
       <Pressable
         hitSlop={10}
         style={[styles.checkbox, task.completed && styles.checkboxCompleted]}
+        disabled={task.isOwnedByMe === false && !task.canEditSharedTask}
         onPress={() => toggleTaskComplete(task.id)}>
         {task.completed && <Ionicons name="checkmark" size={16} color="#fff" />}
       </Pressable>
       <Pressable
         style={styles.cardMain}
+        disabled={task.isOwnedByMe === false && !task.canEditSharedTask}
         onPress={() => router.push({ pathname: '/task-form', params: { id: task.id } })}>
         <View style={styles.cardIcon}>
           <Ionicons name={REPEAT_ICON[task.repeat]} size={22} color="#4F46E5" />
@@ -64,10 +66,27 @@ function TaskCard({ task }: { task: Task }) {
         </View>
       </Pressable>
       <View style={styles.cardActions}>
+        {task.isOwnedByMe === false && (
+          <Ionicons name="people-outline" size={18} color="#059669" />
+        )}
         {task.alarmEnabled && <Ionicons name="alarm" size={18} color="#4F46E5" />}
-        <Pressable hitSlop={10} onPress={() => deleteTask(task.id)}>
-          <Ionicons name="trash-outline" size={20} color="#9CA3AF" />
-        </Pressable>
+        {task.isOwnedByMe === false ? null : (
+          <>
+            {task.isOwnedByMe === true && (
+              <Pressable
+                accessibilityLabel="Share task"
+                hitSlop={10}
+                onPress={() =>
+                  router.push({ pathname: '/task-sharing' as never, params: { id: task.id } })
+                }>
+                <Ionicons name="person-add-outline" size={19} color="#6B7280" />
+              </Pressable>
+            )}
+            <Pressable hitSlop={10} onPress={() => deleteTask(task.id)}>
+              <Ionicons name="trash-outline" size={20} color="#9CA3AF" />
+            </Pressable>
+          </>
+        )}
       </View>
     </View>
   );

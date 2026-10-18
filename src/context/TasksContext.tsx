@@ -24,6 +24,7 @@ interface TasksContextValue {
   deleteTask: (id: string) => Promise<void>;
   toggleTaskComplete: (id: string) => Promise<void>;
   getTask: (id: string) => Task | undefined;
+  importLocalTasks: () => Promise<{ count: number; error: string | null }>;
 }
 
 const TasksContext = createContext<TasksContextValue | undefined>(undefined);
@@ -33,7 +34,12 @@ function createId(): string {
 }
 
 // Notification ids are per-device artifacts and never stored in the cloud — merged in locally only.
-function rowToTask(row: TaskRow, notificationIds: string[]): Task {
+function rowToTask(
+  row: TaskRow,
+  notificationIds: string[],
+  userId: string,
+  canEditSharedTask: boolean
+): Task {
   return {
     id: row.id,
     title: row.title,
@@ -47,12 +53,13 @@ function rowToTask(row: TaskRow, notificationIds: string[]): Task {
     completed: row.completed,
     notificationIds,
     createdAt: row.created_at,
+    isOwnedByMe: row.user_id === userId,
+    canEditSharedTask,
   };
 }
 
-function taskInputToRow(input: TaskInput, userId: string) {
+function taskInputToRow(input: TaskInput) {
   return {
-    user_id: userId,
     title: input.title,
     description: input.description,
     date: input.date,
@@ -95,6 +102,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     }
 
     let cancelled = false;
+    let sharedPermissions = new Map<string, string>();
 
     (async () => {
       await setupNotificationChannels();
@@ -102,7 +110,6 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase
         .from('tasks')
         .select('*')
-        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
       if (cancelled) return;
       if (error) {
@@ -110,11 +117,24 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         setLoading(false);
         return;
       }
+      const { data: shares } = await supabase
+        .from('task_shares')
+        .select('task_id, permission')
+        .eq('shared_with_user_id', user.id);
+      sharedPermissions = new Map(
+        (shares ?? []).map((share) => [share.task_id, share.permission])
+      );
       const next: Task[] = [];
       for (const row of data ?? []) {
-        const ids = await rescheduleTaskAlarms(rowToTask(row, []));
+        const task = rowToTask(
+          row,
+          [],
+          user.id,
+          row.user_id === user.id || sharedPermissions.get(row.id) === 'edit'
+        );
+        const ids = await rescheduleTaskAlarms(task);
         notificationIdsRef.current.set(row.id, ids);
-        next.push(rowToTask(row, ids));
+        next.push({ ...task, notificationIds: ids });
       }
       if (!cancelled) {
         setTasks(next);
@@ -126,7 +146,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       .channel(`tasks-${user.id}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'tasks', filter: `user_id=eq.${user.id}` },
+        { event: '*', schema: 'public', table: 'tasks' },
         async (payload) => {
           if (payload.eventType === 'DELETE') {
             const oldId = (payload.old as { id: string }).id;
@@ -139,7 +159,9 @@ export function TasksProvider({ children }: { children: ReactNode }) {
 
           const row = payload.new as TaskRow;
           const prevIds = notificationIdsRef.current.get(row.id) ?? [];
-          const draft = rowToTask(row, prevIds);
+          const canEditSharedTask =
+            row.user_id === user.id || sharedPermissions.get(row.id) === 'edit';
+          const draft = rowToTask(row, prevIds, user.id, canEditSharedTask);
           let nextIds: string[];
           if (draft.completed) {
             await cancelTaskAlarms(draft);
@@ -148,7 +170,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
             nextIds = await rescheduleTaskAlarms(draft);
           }
           notificationIdsRef.current.set(row.id, nextIds);
-          const finalTask = rowToTask(row, nextIds);
+          const finalTask = rowToTask(row, nextIds, user.id, canEditSharedTask);
           setTasks((prev) =>
             prev.some((t) => t.id === row.id)
               ? prev.map((t) => (t.id === row.id ? finalTask : t))
@@ -158,9 +180,63 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       )
       .subscribe();
 
+    const sharesChannel = supabase
+      .channel(`task-shares-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'task_shares',
+          filter: `shared_with_user_id=eq.${user.id}`,
+        },
+        () => {
+          for (const notificationIds of notificationIdsRef.current.values()) {
+            void cancelTaskAlarms({ notificationIds });
+          }
+          notificationIdsRef.current.clear();
+          setTasks([]);
+          setLoading(true);
+          supabase
+            .from('tasks')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .then(async ({ data, error }) => {
+              if (cancelled || error || !data) return;
+              const { data: currentShares } = await supabase
+                .from('task_shares')
+                .select('task_id, permission')
+                .eq('shared_with_user_id', user.id);
+              if (cancelled) return;
+              sharedPermissions = new Map(
+                (currentShares ?? []).map((share) => [share.task_id, share.permission])
+              );
+              const refreshed = await Promise.all(
+                data.map(async (row) => {
+                  const task = rowToTask(
+                    row,
+                    [],
+                    user.id,
+                    row.user_id === user.id || sharedPermissions.get(row.id) === 'edit'
+                  );
+                  const ids = await rescheduleTaskAlarms(task);
+                  notificationIdsRef.current.set(row.id, ids);
+                  return { ...task, notificationIds: ids };
+                })
+              );
+              if (!cancelled) {
+                setTasks(refreshed);
+                setLoading(false);
+              }
+            });
+        }
+      )
+      .subscribe();
+
     return () => {
       cancelled = true;
       supabase.removeChannel(channel);
+      supabase.removeChannel(sharesChannel);
     };
   }, [cloudEnabled, authLoading, user]);
 
@@ -183,7 +259,9 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     async (input: TaskInput) => {
       if (cloudEnabled && user) {
         // Local state updates via the realtime subscription above once the insert lands.
-        const { error } = await supabase.from('tasks').insert(taskInputToRow(input, user.id));
+        const { error } = await supabase
+          .from('tasks')
+          .insert({ ...taskInputToRow(input), user_id: user.id });
         if (error) console.warn('[tasks] insert failed:', error.message);
         return;
       }
@@ -203,9 +281,11 @@ export function TasksProvider({ children }: { children: ReactNode }) {
   const updateTask = useCallback(
     async (id: string, input: TaskInput) => {
       if (cloudEnabled && user) {
+        const existing = tasks.find((task) => task.id === id);
+        if (existing?.isOwnedByMe === false && !existing.canEditSharedTask) return;
         const { error } = await supabase
           .from('tasks')
-          .update(taskInputToRow(input, user.id))
+          .update(taskInputToRow(input))
           .eq('id', id);
         if (error) console.warn('[tasks] update failed:', error.message);
         return;
@@ -222,6 +302,8 @@ export function TasksProvider({ children }: { children: ReactNode }) {
   const deleteTask = useCallback(
     async (id: string) => {
       if (cloudEnabled && user) {
+        const existing = tasks.find((task) => task.id === id);
+        if (existing?.isOwnedByMe === false) return;
         // Optimistic: don't rely solely on the realtime echo (DELETE broadcasts need
         // `replica identity full` on the table — see supabase/schema.sql — to reach
         // subscribers at all, so update local state immediately as well).
@@ -246,6 +328,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       if (!existing) return;
 
       if (cloudEnabled && user) {
+        if (existing.isOwnedByMe === false && !existing.canEditSharedTask) return;
         const { error } = await supabase
           .from('tasks')
           .update({ completed: !existing.completed })
@@ -271,9 +354,26 @@ export function TasksProvider({ children }: { children: ReactNode }) {
 
   const getTask = useCallback((id: string) => tasks.find((t) => t.id === id), [tasks]);
 
+  const importLocalTasks = useCallback(async () => {
+    if (!cloudEnabled || !user) return { count: 0, error: 'Sign in to a cloud account first.' };
+    const localTasks = await loadTasks();
+    if (localTasks.length === 0) return { count: 0, error: null };
+
+    const rows = localTasks.map((task) => ({
+      ...taskInputToRow(task),
+      user_id: user.id,
+      completed: task.completed,
+    }));
+    const { error } = await supabase.from('tasks').insert(rows);
+    if (error) return { count: 0, error: error.message };
+
+    await saveTasks([]);
+    return { count: localTasks.length, error: null };
+  }, [cloudEnabled, user]);
+
   const value = useMemo(
-    () => ({ tasks, loading, addTask, updateTask, deleteTask, toggleTaskComplete, getTask }),
-    [tasks, loading, addTask, updateTask, deleteTask, toggleTaskComplete, getTask]
+    () => ({ tasks, loading, addTask, updateTask, deleteTask, toggleTaskComplete, getTask, importLocalTasks }),
+    [tasks, loading, addTask, updateTask, deleteTask, toggleTaskComplete, getTask, importLocalTasks]
   );
 
   return <TasksContext.Provider value={value}>{children}</TasksContext.Provider>;

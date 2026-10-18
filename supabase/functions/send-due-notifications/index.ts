@@ -61,11 +61,23 @@ function isDue(task: TaskRow, now: Date): boolean {
   }
 }
 
-Deno.serve(async () => {
+Deno.serve(async (request) => {
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
   );
+
+  const cronSecret = request.headers.get('x-tasky-cron-secret');
+  if (!cronSecret) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+  }
+  const { data: authorized, error: authorizationError } = await supabase.rpc(
+    'is_tasky_cron_authorized',
+    { p_secret: cronSecret }
+  );
+  if (authorizationError || authorized !== true) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
+  }
 
   const now = new Date();
   const { data: tasks, error: tasksError } = await supabase
@@ -82,7 +94,27 @@ Deno.serve(async () => {
     return new Response(JSON.stringify({ sent: 0 }), { status: 200 });
   }
 
-  const userIds = [...new Set(dueTasks.map((t: TaskRow) => t.user_id))];
+  const dueTaskIds = dueTasks.map((task: TaskRow) => task.id);
+  const { data: shares, error: sharesError } = await supabase
+    .from('task_shares')
+    .select('task_id, shared_with_user_id')
+    .in('task_id', dueTaskIds);
+
+  if (sharesError) {
+    return new Response(JSON.stringify({ error: sharesError.message }), { status: 500 });
+  }
+
+  const recipientsByTask = new Map<string, Set<string>>();
+  for (const task of dueTasks as TaskRow[]) {
+    recipientsByTask.set(task.id, new Set([task.user_id]));
+  }
+  for (const share of shares ?? []) {
+    recipientsByTask.get(share.task_id)?.add(share.shared_with_user_id);
+  }
+
+  const userIds = [
+    ...new Set([...recipientsByTask.values()].flatMap((recipients) => [...recipients])),
+  ];
   const { data: tokens, error: tokensError } = await supabase
     .from('push_tokens')
     .select('user_id, expo_push_token')
@@ -100,14 +132,16 @@ Deno.serve(async () => {
   }
 
   const messages = dueTasks.flatMap((task: TaskRow) =>
-    (tokensByUser.get(task.user_id) ?? []).map((token) => ({
-      to: token,
-      title: task.title,
-      body: task.description || 'Tap to view your task',
-      sound: task.alarm_enabled ? 'alarm.wav' : 'default',
-      priority: 'high',
-      data: { taskId: task.id, alarmEnabled: task.alarm_enabled },
-    }))
+    [...(recipientsByTask.get(task.id) ?? [])].flatMap((userId) =>
+      (tokensByUser.get(userId) ?? []).map((token) => ({
+        to: token,
+        title: task.title,
+        body: task.description || 'Tap to view your task',
+        sound: task.alarm_enabled ? 'alarm.wav' : 'default',
+        priority: 'high',
+        data: { taskId: task.id, alarmEnabled: task.alarm_enabled },
+      }))
+    )
   );
 
   if (messages.length === 0) {

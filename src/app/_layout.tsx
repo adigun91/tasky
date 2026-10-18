@@ -85,6 +85,7 @@ function RootLayoutNav() {
       <Stack.Screen name="alarm" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="profile" options={{ title: 'Profile', presentation: 'modal' }} />
       <Stack.Screen name="settings" options={{ title: 'Settings', presentation: 'modal' }} />
+      <Stack.Screen name="task-sharing" options={{ title: 'Share task', presentation: 'modal' }} />
     </Stack>
   );
 }

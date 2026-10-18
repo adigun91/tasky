@@ -21,6 +21,10 @@ export interface Task {
   notificationIds: string[];
   createdAt: string;
   completed: boolean;
+  /** False when the task belongs to another account and is shared with this user. */
+  isOwnedByMe?: boolean;
+  /** True when a shared task grants this account edit permission. */
+  canEditSharedTask?: boolean;
 }
 
 export type TaskInput = Omit<Task, 'id' | 'notificationIds' | 'createdAt' | 'completed'>;

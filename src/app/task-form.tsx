@@ -60,6 +60,8 @@ export default function TaskFormScreen() {
   const contentStyle = useResponsiveContentStyle(FORM_MAX_WIDTH);
   const existing = id ? getTask(id) : undefined;
   const isEditing = !!existing;
+  const isReadOnly = existing?.isOwnedByMe === false && !existing.canEditSharedTask;
+  const isSharedTask = existing?.isOwnedByMe === false;
 
   const [title, setTitle] = useState(existing?.title ?? '');
   const [description, setDescription] = useState(existing?.description ?? '');
@@ -159,6 +161,11 @@ export default function TaskFormScreen() {
   return (
     <View style={styles.outer}>
       <ScrollView style={styles.container} contentContainerStyle={[styles.content, contentStyle]}>
+      {isSharedTask && (
+        <Text style={styles.helperText}>
+          {isReadOnly ? 'Shared with you · view only' : 'Shared with you · changes sync to the owner'}
+        </Text>
+      )}
         <Text style={styles.label}>Title</Text>
         <TextInput
           style={styles.input}
@@ -317,12 +324,12 @@ export default function TaskFormScreen() {
 
       <Pressable
         style={[styles.saveButton, !canSave && styles.saveButtonDisabled]}
-        disabled={!canSave || saving}
+        disabled={!canSave || saving || isReadOnly}
         onPress={handleSave}>
         <Text style={styles.saveButtonText}>{isEditing ? 'Save changes' : 'Create task'}</Text>
       </Pressable>
 
-      {isEditing && (
+      {isEditing && existing?.isOwnedByMe !== false && (
         <Pressable style={styles.deleteButton} onPress={handleDelete}>
           <Text style={styles.deleteButtonText}>Delete task</Text>
         </Pressable>
