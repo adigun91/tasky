@@ -1,14 +1,38 @@
-import { ScrollView, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, ScrollView, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useProfile } from '@/context/ProfileContext';
 import { useAuth } from '@/context/AuthContext';
 import { FORM_MAX_WIDTH, useResponsiveContentStyle } from '@/lib/responsive';
 import { Footer } from '@/components/Footer';
+import { useTasks } from '@/context/TasksContext';
+import { useState } from 'react';
 
 export default function SettingsScreen() {
   const { settings, updateSettings } = useProfile();
   const { cloudEnabled, user, signOut } = useAuth();
+  const { importLocalTasks } = useTasks();
   const contentStyle = useResponsiveContentStyle(FORM_MAX_WIDTH);
+  const [importing, setImporting] = useState(false);
+
+  function confirmImport() {
+    Alert.alert(
+      'Back up this device’s tasks?',
+      'Local tasks will be copied to your cloud account. The local copy is cleared only after the cloud import succeeds.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Back up tasks',
+          onPress: async () => {
+            setImporting(true);
+            const result = await importLocalTasks();
+            setImporting(false);
+            if (result.error) Alert.alert('Backup failed', result.error);
+            else Alert.alert('Backup complete', `${result.count} task${result.count === 1 ? '' : 's'} backed up.`);
+          },
+        },
+      ]
+    );
+  }
 
   return (
     <View style={styles.outer}>
@@ -62,6 +86,13 @@ export default function SettingsScreen() {
         <View style={styles.card}>
           <Text style={styles.label}>Account</Text>
           <Text style={styles.helperText}>Signed in as {user?.email}</Text>
+          <Text style={styles.helperText}>
+            Tasks are stored in your account and restore automatically when you sign in again.
+          </Text>
+          <Pressable style={styles.backupButton} onPress={confirmImport} disabled={importing}>
+            <Ionicons name="cloud-upload-outline" size={18} color="#18543E" />
+            <Text style={styles.backupText}>{importing ? 'Backing up…' : 'Back up local tasks'}</Text>
+          </Pressable>
           <Pressable style={styles.signOutButton} onPress={signOut}>
             <Ionicons name="log-out-outline" size={18} color="#DC2626" />
             <Text style={styles.signOutText}>Sign out</Text>
@@ -115,5 +146,17 @@ const styles = StyleSheet.create({
     marginTop: 12,
     alignSelf: 'flex-start',
   },
+  backupButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#E5F2EA',
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
+  backupText: { color: '#18543E', fontSize: 14, fontWeight: '600' },
   signOutText: { color: '#DC2626', fontSize: 14, fontWeight: '600' },
 });
